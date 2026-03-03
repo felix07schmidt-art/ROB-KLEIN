@@ -65,13 +65,37 @@ function renderSettings() {
   root.innerHTML = currentConfig.axes.map(axisSettingsBlock).join('');
 }
 
-function renderNetwork() {
+async function renderNetwork() {
   const n = currentConfig.network;
+  let networkStatus = null;
+  try {
+    const res = await fetch('/api/network_status');
+    if (res.ok) {
+      networkStatus = await res.json();
+    }
+  } catch (_) {
+    networkStatus = null;
+  }
+
+  const preferredUrl = networkStatus?.preferred_url || `http://${n.preferred_ip || '192.168.100.2'}:${n.port}`;
+  const reachableUrls = (networkStatus?.interfaces || []).map(
+    i => `<li><code>http://${i.ip}:${n.port}</code> (${i.interface})</li>`
+  ).join('');
+  const preferredState = networkStatus
+    ? (networkStatus.preferred_ip_detected
+      ? '<p><strong>Status bevorzugte IP:</strong> ✅ erkannt</p>'
+      : '<p><strong>Status bevorzugte IP:</strong> ⚠️ aktuell nicht erkannt</p>')
+    : '<p><strong>Status bevorzugte IP:</strong> ⚠️ nicht geprüft</p>';
+
   document.getElementById('networkData').innerHTML = `
     <div class="axis-card">
       <p><strong>SSID:</strong> ${n.ap_ssid}</p>
       <p><strong>Passwort:</strong> ${n.ap_password}</p>
-      <p><strong>Server:</strong> http://${n.host}:${n.port}</p>
+      <p><strong>Server-Binding:</strong> http://${n.host}:${n.port}</p>
+      <p><strong>Bevorzugte URL (Raspberry Pi):</strong> <code>${preferredUrl}</code></p>
+      ${preferredState}
+      <p><strong>Erkannte LAN/WLAN-URLs:</strong></p>
+      ${reachableUrls ? `<ul>${reachableUrls}</ul>` : '<p>Keine aktiven LAN/WLAN-Interfaces erkannt.</p>'}
     </div>
   `;
 }
