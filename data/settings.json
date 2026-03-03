@@ -3,7 +3,8 @@
     "ap_ssid": "Robot-Controller",
     "ap_password": "Roboter123!",
     "host": "0.0.0.0",
-    "port": 5000
+    "port": 5000,
+    "expose_on_ethernet_and_wlan": true
   },
   "axes": [
     {
