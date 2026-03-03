@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import subprocess
 import threading
 import time
 from dataclasses import dataclass
@@ -24,6 +25,7 @@ DEFAULT_CONFIG = {
     "network": {
         "ap_ssid": "Robot-Controller",
         "ap_password": "Roboter123!",
+        "expose_on_ethernet_and_wlan": True,
         "host": "0.0.0.0",
         "port": 5000,
     },
@@ -121,7 +123,12 @@ class StepDirController:
 
 def load_config() -> dict:
     if CONFIG_PATH.exists():
-        return json.loads(CONFIG_PATH.read_text(encoding="utf-8"))
+        config = json.loads(CONFIG_PATH.read_text(encoding="utf-8"))
+        network_config = config.setdefault("network", {})
+        network_config.setdefault("host", "0.0.0.0")
+        network_config.setdefault("port", 5000)
+        network_config.setdefault("expose_on_ethernet_and_wlan", True)
+        return config
     CONFIG_PATH.parent.mkdir(parents=True, exist_ok=True)
     CONFIG_PATH.write_text(json.dumps(DEFAULT_CONFIG, indent=2, ensure_ascii=False), encoding="utf-8")
     return json.loads(json.dumps(DEFAULT_CONFIG))
@@ -129,6 +136,33 @@ def load_config() -> dict:
 
 def save_config(config: dict) -> None:
     CONFIG_PATH.write_text(json.dumps(config, indent=2, ensure_ascii=False), encoding="utf-8")
+
+
+def get_lan_urls(port: int) -> List[str]:
+    try:
+        result = subprocess.run(
+            ["ip", "-4", "-o", "addr", "show", "up"],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+    except FileNotFoundError:
+        return []
+
+    urls: List[str] = []
+    for line in result.stdout.splitlines():
+        parts = line.split()
+        if len(parts) < 4:
+            continue
+        interface_name = parts[1]
+        if not interface_name.startswith(("eth", "en", "wlan", "wl")):
+            continue
+        cidr = next((part for part in parts if "/" in part and part.count(".") == 3), None)
+        if not cidr:
+            continue
+        ip_addr = cidr.split("/", 1)[0]
+        urls.append(f"http://{ip_addr}:{port} ({interface_name})")
+    return sorted(set(urls))
 
 
 config_store = load_config()
@@ -221,10 +255,22 @@ class RobotRequestHandler(BaseHTTPRequestHandler):
 
 
 def run() -> None:
-    host = config_store["network"]["host"]
-    port = int(config_store["network"]["port"])
+    network = config_store["network"]
+    host = network.get("host", "0.0.0.0")
+    port = int(network.get("port", 5000))
+    if network.get("expose_on_ethernet_and_wlan", True):
+        host = "0.0.0.0"
+
     server = ThreadingHTTPServer((host, port), RobotRequestHandler)
     print(f"Server läuft auf http://{host}:{port}")
+    if host == "0.0.0.0":
+        lan_urls = get_lan_urls(port)
+        if lan_urls:
+            print("Erreichbar über Ethernet/WLAN:")
+            for url in lan_urls:
+                print(f" - {url}")
+        else:
+            print("Ethernet/WLAN aktiv: nutze die IP-Adresse des Geräts und Port", port)
     server.serve_forever()
 
 
