@@ -1,0 +1,3 @@
+# Keine Pflichtabhängigkeiten nötig.
+# Optional auf Raspberry Pi:
+# RPi.GPIO

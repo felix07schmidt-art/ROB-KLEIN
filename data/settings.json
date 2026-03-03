@@ -1,0 +1,88 @@
+{
+  "network": {
+    "ap_ssid": "Robot-Controller",
+    "ap_password": "Roboter123!",
+    "host": "0.0.0.0",
+    "port": 5000
+  },
+  "axes": [
+    {
+      "id": 1,
+      "name": "Achse 1",
+      "step_pin": 17,
+      "dir_pin": 18,
+      "min_deg": -90,
+      "max_deg": 90,
+      "steps_per_90_deg": 1600,
+      "max_speed_steps_s": 2000,
+      "accel_steps_s2": 2500,
+      "invert_direction": false,
+      "current_deg": 0
+    },
+    {
+      "id": 2,
+      "name": "Achse 2",
+      "step_pin": 19,
+      "dir_pin": 20,
+      "min_deg": -90,
+      "max_deg": 90,
+      "steps_per_90_deg": 1600,
+      "max_speed_steps_s": 2000,
+      "accel_steps_s2": 2500,
+      "invert_direction": false,
+      "current_deg": 0
+    },
+    {
+      "id": 3,
+      "name": "Achse 3",
+      "step_pin": 21,
+      "dir_pin": 22,
+      "min_deg": -90,
+      "max_deg": 90,
+      "steps_per_90_deg": 1600,
+      "max_speed_steps_s": 2000,
+      "accel_steps_s2": 2500,
+      "invert_direction": false,
+      "current_deg": 0
+    },
+    {
+      "id": 4,
+      "name": "Achse 4",
+      "step_pin": 23,
+      "dir_pin": 24,
+      "min_deg": -90,
+      "max_deg": 90,
+      "steps_per_90_deg": 1600,
+      "max_speed_steps_s": 2000,
+      "accel_steps_s2": 2500,
+      "invert_direction": false,
+      "current_deg": 0
+    },
+    {
+      "id": 5,
+      "name": "Achse 5",
+      "step_pin": 25,
+      "dir_pin": 26,
+      "min_deg": -90,
+      "max_deg": 90,
+      "steps_per_90_deg": 1600,
+      "max_speed_steps_s": 2000,
+      "accel_steps_s2": 2500,
+      "invert_direction": false,
+      "current_deg": 0
+    },
+    {
+      "id": 6,
+      "name": "Achse 6",
+      "step_pin": 27,
+      "dir_pin": 28,
+      "min_deg": -90,
+      "max_deg": 90,
+      "steps_per_90_deg": 1600,
+      "max_speed_steps_s": 2000,
+      "accel_steps_s2": 2500,
+      "invert_direction": false,
+      "current_deg": 0
+    }
+  ]
+}
