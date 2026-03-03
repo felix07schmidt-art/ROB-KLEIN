@@ -12,6 +12,7 @@ Dieses Repository enthält jetzt eine lauffähige Websteuerung für einen 6-Achs
 - Endanschläge werden beim Fahren serverseitig erzwungen (Clamping).
 - Konfiguration wird persistent in `data/settings.json` gespeichert.
 - Simulationsmodus auf Nicht-Raspberry-Systemen (wenn `RPi.GPIO` nicht verfügbar ist).
+- Netzwerkstatus-API `GET /api/network_status` zeigt erkannte LAN/WLAN-Interfaces und prüft, ob die bevorzugte Pi-IP (`192.168.100.2`) aktiv ist.
 
 ## Projektstruktur
 
@@ -41,7 +42,8 @@ python app.py
 Dann im Browser öffnen:
 
 - Lokal: `http://localhost:5000`
-- Im WLAN des Raspberry Pi: `http://<pi-ip>:5000`
+- Über WLAN **und** LAN (bei statischer Pi-IP): `http://192.168.100.2:5000`
+- Alternativ über jede erkannte Interface-IP (wird im Tab **Netzwerk** angezeigt).
 
 ## WLAN-Access-Point (Raspberry Pi)
 

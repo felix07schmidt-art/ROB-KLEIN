@@ -28,6 +28,7 @@ DEFAULT_CONFIG = {
         "expose_on_ethernet_and_wlan": True,
         "host": "0.0.0.0",
         "port": 5000,
+        "preferred_ip": "192.168.100.2",
     },
     "axes": [
         {
@@ -128,6 +129,7 @@ def load_config() -> dict:
         network_config.setdefault("host", "0.0.0.0")
         network_config.setdefault("port", 5000)
         network_config.setdefault("expose_on_ethernet_and_wlan", True)
+        network_config.setdefault("preferred_ip", "192.168.100.2")
         return config
     CONFIG_PATH.parent.mkdir(parents=True, exist_ok=True)
     CONFIG_PATH.write_text(json.dumps(DEFAULT_CONFIG, indent=2, ensure_ascii=False), encoding="utf-8")
@@ -138,7 +140,7 @@ def save_config(config: dict) -> None:
     CONFIG_PATH.write_text(json.dumps(config, indent=2, ensure_ascii=False), encoding="utf-8")
 
 
-def get_lan_urls(port: int) -> List[str]:
+def get_lan_addresses() -> List[dict]:
     try:
         result = subprocess.run(
             ["ip", "-4", "-o", "addr", "show", "up"],
@@ -149,7 +151,7 @@ def get_lan_urls(port: int) -> List[str]:
     except FileNotFoundError:
         return []
 
-    urls: List[str] = []
+    addresses: List[dict] = []
     for line in result.stdout.splitlines():
         parts = line.split()
         if len(parts) < 4:
@@ -161,8 +163,32 @@ def get_lan_urls(port: int) -> List[str]:
         if not cidr:
             continue
         ip_addr = cidr.split("/", 1)[0]
-        urls.append(f"http://{ip_addr}:{port} ({interface_name})")
-    return sorted(set(urls))
+        addresses.append({"interface": interface_name, "ip": ip_addr})
+
+    unique_addresses: Dict[str, dict] = {}
+    for entry in addresses:
+        unique_addresses[f"{entry['interface']}:{entry['ip']}"] = entry
+    return [unique_addresses[key] for key in sorted(unique_addresses.keys())]
+
+
+def get_lan_urls(port: int) -> List[str]:
+    return [f"http://{entry['ip']}:{port} ({entry['interface']})" for entry in get_lan_addresses()]
+
+
+def get_network_status() -> dict:
+    network = config_store["network"]
+    port = int(network.get("port", 5000))
+    preferred_ip = network.get("preferred_ip", "192.168.100.2")
+    lan_addresses = get_lan_addresses()
+    return {
+        "host": network.get("host", "0.0.0.0"),
+        "port": port,
+        "preferred_ip": preferred_ip,
+        "preferred_url": f"http://{preferred_ip}:{port}",
+        "reachable_urls": [f"http://{entry['ip']}:{port}" for entry in lan_addresses],
+        "interfaces": lan_addresses,
+        "preferred_ip_detected": any(entry["ip"] == preferred_ip for entry in lan_addresses),
+    }
 
 
 config_store = load_config()
@@ -200,6 +226,8 @@ class RobotRequestHandler(BaseHTTPRequestHandler):
             self._send_file(TEMPLATE_FILE, "text/html; charset=utf-8")
         elif path == "/api/config":
             self._send_json(config_store)
+        elif path == "/api/network_status":
+            self._send_json(get_network_status())
         elif path.startswith("/static/"):
             rel = path.replace("/static/", "", 1)
             file_path = STATIC_DIR / rel
@@ -264,7 +292,14 @@ def run() -> None:
     server = ThreadingHTTPServer((host, port), RobotRequestHandler)
     print(f"Server läuft auf http://{host}:{port}")
     if host == "0.0.0.0":
-        lan_urls = get_lan_urls(port)
+        network_status = get_network_status()
+        lan_urls = [
+            f"http://{entry['ip']}:{port} ({entry['interface']})"
+            for entry in network_status["interfaces"]
+        ]
+        print(f"Bevorzugte Adresse: {network_status['preferred_url']}")
+        if not network_status["preferred_ip_detected"]:
+            print("Hinweis: Bevorzugte IP aktuell nicht auf einem LAN/WLAN-Interface gefunden.")
         if lan_urls:
             print("Erreichbar über Ethernet/WLAN:")
             for url in lan_urls:
