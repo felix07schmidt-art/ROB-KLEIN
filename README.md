@@ -1,27 +1,68 @@
-# ROB-KLEIN
+# ROB-KLEIN – 6-Achs-Roboter Websteuerung
 
-Grobe Projektstruktur für einen 6-Achs-Roboterarm:
-- Steuerung über **Raspberry Pi 5 GPIO**
-- **6x 7B6600** Treiber für Schrittmotoren
+Dieses Repository enthält jetzt eine lauffähige Websteuerung für einen 6-Achs-Roboter mit STEP/DIR-Treibern am Raspberry Pi.
 
-## Ordnerstruktur
+## Features
+
+- Weboberfläche mit **Tabs**:
+  - **Steuerung**: Achsen per Slider oder Grad-Eingabe fahren.
+  - **Einstellungen**: Endanschläge, max. Tempo, Steps pro 90°, Beschleunigung, GPIO-Pins.
+  - **Netzwerk**: AP-Daten (SSID/Passwort/Server).
+- 6 Achsen mit STEP/DIR-Ansteuerung über GPIO.
+- Endanschläge werden beim Fahren serverseitig erzwungen (Clamping).
+- Konfiguration wird persistent in `data/settings.json` gespeichert.
+- Simulationsmodus auf Nicht-Raspberry-Systemen (wenn `RPi.GPIO` nicht verfügbar ist).
+
+## Projektstruktur
 
 ```text
 .
-├── config/               # GPIO, Achsen- und Motor-Profile
-├── data/                 # Laufzeitdaten (Logs, Telemetrie, Kalibrierwerte)
-├── docs/                 # Anforderungen, Schaltplan, Sicherheit, Kalibrierung
-├── firmware/             # Echtzeitnahe Steuerlogik (GPIO, Motion, Kinematik)
-├── hardware/             # Hardware-Doku (Pinout, Verdrahtung, PSU, Not-Aus)
-├── scripts/              # Setup-, Deploy- und Wartungsskripte
-└── software/             # API, UI, Simulation und Logging
+├── app.py                # HTTP-API + STEP/DIR Controller
+├── requirements.txt      # Python-Abhängigkeiten
+├── templates/
+│   └── index.html        # UI mit Tabs
+├── static/
+│   ├── app.js            # Frontend-Logik
+│   └── style.css         # Styling
+├── data/
+│   └── settings.json     # Laufzeit-Konfiguration (wird beim ersten Start erstellt)
+└── docs/
 ```
 
-## Vorschlag zur nächsten Aufteilung
+## Starten
 
-1. `hardware/pinout/`: GPIO-Belegung für STEP/DIR/ENA je Achse dokumentieren.
-2. `config/achsen/`: Achsenparameter (Steps/mm, Limits, Richtung, Homing-Sensoren).
-3. `firmware/gpio-control/`: Low-Level Treiber für Puls-Generierung auf dem Pi 5.
-4. `firmware/motion-control/`: Bahnplanung, Rampen (Accel/Decel), synchronisierte 6-Achs-Fahrten.
-5. `firmware/kinematik/`: Vorwärts-/Inverse-Kinematik des Roboterarms.
-6. `docs/sicherheit/`: Not-Aus, Endschalter, Stromgrenzen, Recovery-Prozeduren.
+```bash
+python3 -m venv .venv
+source .venv/bin/activate
+pip install -r requirements.txt
+python app.py
+```
+
+Dann im Browser öffnen:
+
+- Lokal: `http://localhost:5000`
+- Im WLAN des Raspberry Pi: `http://<pi-ip>:5000`
+
+## WLAN-Access-Point (Raspberry Pi)
+
+Damit sich jeder direkt mit dem Pi verbinden kann, setze ihn als AP auf (z. B. mit `hostapd` + `dnsmasq`).
+
+1. `hostapd` installieren und SSID/Passwort setzen.
+2. `dnsmasq` für DHCP im AP-Netz konfigurieren.
+3. WLAN-Interface statisch konfigurieren.
+4. Python-App als `systemd` Service autostarten.
+
+> Sicherheit: Verwende ein starkes WPA2/WPA3 Passwort und setze zusätzlich einen Not-Aus im Hardwarekreis.
+
+## API Kurzüberblick
+
+- `GET /api/config` → komplette Konfiguration
+- `POST /api/config` → Achsenparameter speichern
+- `POST /api/move` → einzelne Achse fahren
+- `POST /api/move_all` → alle Achsen fahren
+
+## Wichtiger Hinweis für GPIO/Mechanik
+
+- Nutze saubere Pegel, gemeinsame Masse und geeignetes Netzteil.
+- Teste zuerst mit kleinen Geschwindigkeiten/Beschleunigungen.
+- Endanschläge im UI ersetzen **keine** physischen Not-Aus-/Limit-Sicherheitskette.
