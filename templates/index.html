@@ -12,10 +12,20 @@
     <p>Websteuerung über Raspberry-Pi-WLAN</p>
   </header>
 
+  <section class="quick-controls">
+    <button id="stopBtn" class="danger">STOPP</button>
+    <button id="enableBtn" class="success">Enable AN</button>
+    <button id="disableBtn" class="secondary">Enable AUS</button>
+    <button id="homeBtn" class="primary">Referenzfahrt (Home)</button>
+    <span id="statusBadge" class="status-pill">Status: bereit</span>
+  </section>
+
   <nav class="tabs">
     <button class="tab-btn active" data-tab="control">Steuerung</button>
+    <button class="tab-btn" data-tab="points">Points</button>
     <button class="tab-btn" data-tab="settings">Einstellungen</button>
     <button class="tab-btn" data-tab="network">Netzwerk</button>
+    <button class="tab-btn" data-tab="console">Konsole</button>
   </nav>
 
   <main>
@@ -23,6 +33,20 @@
       <h2>Achsen fahren</h2>
       <div id="controlAxes" class="axis-grid"></div>
       <button id="moveAllBtn" class="primary">Alle Achsen fahren</button>
+    </section>
+
+    <section id="points" class="tab-content">
+      <h2>Positionen speichern (Points)</h2>
+      <div class="axis-card">
+        <div class="points-row">
+          <input id="pointName" type="text" placeholder="Name für aktuelle Roboterposition" />
+          <button id="savePointBtn" class="primary">Aktuelle Position speichern</button>
+        </div>
+      </div>
+      <div class="axis-card">
+        <h3>Gespeicherte Points</h3>
+        <div id="pointsList"></div>
+      </div>
     </section>
 
     <section id="settings" class="tab-content">
@@ -34,10 +58,13 @@
     </section>
 
     <section id="network" class="tab-content">
-      <h2>Raspberry Pi Access Point</h2>
-      <p>Verbinde dich mit dem WLAN des Raspberry Pi und öffne dann diese Seite im Browser.</p>
+      <h2>Raspberry Pi Netzwerkstatus</h2>
       <div id="networkData"></div>
-      <p class="hint">Tipp: Für den AP bitte hostapd + dnsmasq einrichten (siehe README).</p>
+    </section>
+
+    <section id="console" class="tab-content">
+      <h2>System-Konsole</h2>
+      <pre id="consoleOutput" class="console-box"></pre>
     </section>
   </main>
 

@@ -4,7 +4,10 @@
     "ap_password": "Roboter123!",
     "host": "0.0.0.0",
     "port": 5000,
-    "expose_on_ethernet_and_wlan": true
+    "expose_on_ethernet_and_wlan": true,
+    "preferred_ip": "192.168.100.2",
+    "wifi_ssid": "KRA1 W-Lan",
+    "wifi_password": "kukakuka"
   },
   "axes": [
     {
@@ -18,7 +21,9 @@
       "max_speed_steps_s": 2000,
       "accel_steps_s2": 2500,
       "invert_direction": false,
-      "current_deg": 0
+      "current_deg": 0.0,
+      "enable_pin": 5,
+      "enable_active_low": true
     },
     {
       "id": 2,
@@ -31,7 +36,9 @@
       "max_speed_steps_s": 2000,
       "accel_steps_s2": 2500,
       "invert_direction": false,
-      "current_deg": 0
+      "current_deg": 0.0,
+      "enable_pin": 6,
+      "enable_active_low": true
     },
     {
       "id": 3,
@@ -44,7 +51,9 @@
       "max_speed_steps_s": 2000,
       "accel_steps_s2": 2500,
       "invert_direction": false,
-      "current_deg": 0
+      "current_deg": 0.0,
+      "enable_pin": 12,
+      "enable_active_low": true
     },
     {
       "id": 4,
@@ -57,7 +66,9 @@
       "max_speed_steps_s": 2000,
       "accel_steps_s2": 2500,
       "invert_direction": false,
-      "current_deg": 0
+      "current_deg": 0.0,
+      "enable_pin": 13,
+      "enable_active_low": true
     },
     {
       "id": 5,
@@ -70,7 +81,9 @@
       "max_speed_steps_s": 2000,
       "accel_steps_s2": 2500,
       "invert_direction": false,
-      "current_deg": 0
+      "current_deg": 0.0,
+      "enable_pin": 19,
+      "enable_active_low": true
     },
     {
       "id": 6,
@@ -83,7 +96,10 @@
       "max_speed_steps_s": 2000,
       "accel_steps_s2": 2500,
       "invert_direction": false,
-      "current_deg": 0
+      "current_deg": 0.0,
+      "enable_pin": 26,
+      "enable_active_low": true
     }
-  ]
+  ],
+  "points": []
 }
