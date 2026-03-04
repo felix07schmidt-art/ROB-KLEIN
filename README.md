@@ -32,6 +32,16 @@ Dieses Repository enthält jetzt eine lauffähige Websteuerung für einen 6-Achs
 
 ## Starten
 
+Wenn du nur schnell loslegen willst:
+
+```bash
+python3 app.py
+```
+
+Dann im Browser `http://<IP-des-Pi>:5000` öffnen.
+
+Empfohlener Weg mit virtueller Umgebung:
+
 ```bash
 python3 -m venv .venv
 source .venv/bin/activate
