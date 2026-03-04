@@ -67,6 +67,23 @@ Damit sich jeder direkt mit dem Pi verbinden kann, setze ihn als AP auf (z. B. m
 > Sicherheit: Verwende ein starkes WPA2/WPA3 Passwort und setze zusätzlich einen Not-Aus im Hardwarekreis.
 
 
+
+## AP-Fehlersuche-Skript (Raspberry Pi)
+
+Für eine strukturierte Diagnose von WLAN-AP + Web-UI-Erreichbarkeit:
+
+```bash
+sudo ./scripts/setup/pi_ap_diagnose.sh /tmp/rob-klein-diag
+```
+
+Ergebnis:
+- Vollständiges Log mit allen Pflichtchecks (Services, Journals, Ports, Konfigurationen, API-Check).
+- Kurz-Zusammenfassung mit wahrscheinlichsten Ursache-Branches.
+
+Dateien:
+- `/tmp/rob-klein-diag/pi_ap_diagnose_<timestamp>.log`
+- `/tmp/rob-klein-diag/pi_ap_summary_<timestamp>.txt`
+
 ## Test-Suite (Konsole)
 
 Es gibt eine vollständige Konsolen-Test-Suite mit detaillierter Ausgabe:
