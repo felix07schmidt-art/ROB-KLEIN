@@ -4,12 +4,13 @@ import json
 import subprocess
 import threading
 import time
+from contextlib import suppress
 from dataclasses import dataclass
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Dict, List
-from urllib.parse import urlparse
+from urllib.parse import parse_qs, urlparse
 
 try:
     import RPi.GPIO as GPIO  # type: ignore
@@ -30,12 +31,15 @@ DEFAULT_CONFIG = {
         "port": 5000,
         "preferred_ip": "192.168.100.2",
     },
+    "points": [],
     "axes": [
         {
             "id": i + 1,
             "name": f"Achse {i + 1}",
             "step_pin": 17 + (i * 2),
             "dir_pin": 18 + (i * 2),
+            "enable_pin": [5, 6, 12, 13, 19, 26][i],
+            "enable_active_low": True,
             "min_deg": -90,
             "max_deg": 90,
             "steps_per_90_deg": 1600,
@@ -59,6 +63,9 @@ class StepDirController:
         self.config = config
         self._active_moves = 0
         self._active_moves_lock = threading.Lock()
+        self._enable_lock = threading.Lock()
+        self.stop_requested = threading.Event()
+        self.motors_enabled = True
         self.axes_runtime: Dict[int, AxisRuntime] = {
             axis["id"]: AxisRuntime(lock=threading.Lock()) for axis in config["axes"]
         }
@@ -69,11 +76,37 @@ class StepDirController:
             for axis in config["axes"]:
                 GPIO.setup(axis["step_pin"], GPIO.OUT)
                 GPIO.setup(axis["dir_pin"], GPIO.OUT)
+                GPIO.setup(axis["enable_pin"], GPIO.OUT)
                 GPIO.output(axis["step_pin"], GPIO.LOW)
+            self.set_motor_enable(True)
 
     @staticmethod
     def _clamp(value: float, min_value: float, max_value: float) -> float:
         return max(min_value, min(max_value, value))
+
+    def _write_enable_pin(self, axis: dict, enabled: bool) -> None:
+        if self.simulation_mode:
+            return
+        active_low = axis.get("enable_active_low", True)
+        if active_low:
+            pin_state = GPIO.LOW if enabled else GPIO.HIGH
+        else:
+            pin_state = GPIO.HIGH if enabled else GPIO.LOW
+        GPIO.output(axis["enable_pin"], pin_state)
+
+    def set_motor_enable(self, enabled: bool) -> None:
+        with self._enable_lock:
+            self.motors_enabled = enabled
+            for axis in self.config["axes"]:
+                self._write_enable_pin(axis, enabled)
+            if not enabled:
+                self.stop_requested.set()
+            else:
+                self.stop_requested.clear()
+
+    def emergency_stop(self) -> None:
+        self.stop_requested.set()
+        self.set_motor_enable(False)
 
     def _pulse(self, step_pin: int, pulse_delay_s: float) -> None:
         if self.simulation_mode:
@@ -87,6 +120,10 @@ class StepDirController:
         axis = next((a for a in self.config["axes"] if a["id"] == axis_id), None)
         if not axis:
             raise ValueError(f"Achse {axis_id} nicht gefunden")
+        if not self.motors_enabled:
+            raise ValueError("Motoren sind deaktiviert (Enable AUS)")
+        if self.stop_requested.is_set():
+            raise ValueError("Stopp ist aktiv. Bitte Enable aktivieren.")
 
         runtime = self.axes_runtime[axis_id]
         with runtime.lock:
@@ -109,20 +146,43 @@ class StepDirController:
             current_speed = 100.0
             min_delay = 1.0 / max_speed / 2.0
 
+            moved_steps = 0
+            interrupted = False
             with self._track_move():
                 for _ in range(total_steps):
+                    if self.stop_requested.is_set() or not self.motors_enabled:
+                        interrupted = True
+                        break
                     current_speed = min(max_speed, current_speed + accel * 0.001)
                     pulse_delay = max(min_delay, 1.0 / current_speed / 2.0)
                     self._pulse(axis["step_pin"], pulse_delay)
+                    moved_steps += 1
 
-            axis["current_deg"] = clamped_target
+            signed_steps = moved_steps if delta_deg >= 0 else -moved_steps
+            axis["current_deg"] = round(axis["current_deg"] + (signed_steps / steps_per_deg), 4)
             return {
                 "axis_id": axis_id,
                 "target_deg": clamped_target,
                 "current_deg": axis["current_deg"],
-                "steps": total_steps,
+                "steps": moved_steps,
+                "interrupted": interrupted,
                 "clamped": clamped_target != target_deg,
             }
+
+    def home_all_axes(self) -> list[dict]:
+        if not self.motors_enabled:
+            raise ValueError("Motoren sind deaktiviert (Enable AUS)")
+        if self.stop_requested.is_set():
+            raise ValueError("Stopp ist aktiv. Bitte Enable aktivieren.")
+
+        results = []
+        for axis in self.config["axes"]:
+            results.append(self.move_axis_to(axis["id"], float(axis["min_deg"])))
+
+        for axis in self.config["axes"]:
+            axis["current_deg"] = 0.0
+
+        return results
 
     def is_moving(self) -> bool:
         with self._active_moves_lock:
@@ -152,6 +212,10 @@ def load_config() -> dict:
         network_config.setdefault("port", 5000)
         network_config.setdefault("expose_on_ethernet_and_wlan", True)
         network_config.setdefault("preferred_ip", "192.168.100.2")
+        config.setdefault("points", [])
+        for idx, axis in enumerate(config.get("axes", [])):
+            axis.setdefault("enable_pin", [5, 6, 12, 13, 19, 26][idx])
+            axis.setdefault("enable_active_low", True)
         return config
     CONFIG_PATH.parent.mkdir(parents=True, exist_ok=True)
     CONFIG_PATH.write_text(json.dumps(DEFAULT_CONFIG, indent=2, ensure_ascii=False), encoding="utf-8")
@@ -191,27 +255,6 @@ def get_lan_addresses() -> List[dict]:
     for entry in addresses:
         unique_addresses[f"{entry['interface']}:{entry['ip']}"] = entry
     return [unique_addresses[key] for key in sorted(unique_addresses.keys())]
-
-
-def get_lan_urls(port: int) -> List[str]:
-    return [f"http://{entry['ip']}:{port} ({entry['interface']})" for entry in get_lan_addresses()]
-
-
-def get_network_status() -> dict:
-    network = config_store["network"]
-    port = int(network.get("port", 5000))
-    preferred_ip = network.get("preferred_ip", "192.168.100.2")
-    lan_addresses = get_lan_addresses()
-    return {
-        "host": network.get("host", "0.0.0.0"),
-        "port": port,
-        "preferred_ip": preferred_ip,
-        "preferred_url": f"http://{preferred_ip}:{port}",
-        "reachable_urls": [f"http://{entry['ip']}:{port}" for entry in lan_addresses],
-        "interfaces": lan_addresses,
-        "preferred_ip_detected": any(entry["ip"] == preferred_ip for entry in lan_addresses),
-        "wifi_connected": is_wifi_connected(),
-    }
 
 
 def get_wifi_interface() -> str | None:
@@ -255,15 +298,57 @@ def is_wifi_connected() -> bool:
     return "inet " in result.stdout
 
 
+def get_wifi_info() -> dict:
+    interface = get_wifi_interface()
+    if not interface:
+        return {"interface": None, "ssid": None}
+
+    ssid = None
+    with suppress(FileNotFoundError):
+        result = subprocess.run(["iwgetid", "-r"], capture_output=True, text=True, check=False)
+        if result.returncode == 0:
+            ssid = result.stdout.strip() or None
+
+    if not ssid:
+        with suppress(FileNotFoundError):
+            result = subprocess.run(["nmcli", "-t", "-f", "ACTIVE,SSID", "dev", "wifi"], capture_output=True, text=True, check=False)
+            if result.returncode == 0:
+                for line in result.stdout.splitlines():
+                    if line.startswith("yes:"):
+                        ssid = line.split(":", 1)[1].strip() or None
+                        break
+
+    return {"interface": interface, "ssid": ssid}
+
+
+def get_network_status() -> dict:
+    network = config_store["network"]
+    port = int(network.get("port", 5000))
+    preferred_ip = network.get("preferred_ip", "192.168.100.2")
+    lan_addresses = get_lan_addresses()
+    wifi_info = get_wifi_info()
+    return {
+        "host": network.get("host", "0.0.0.0"),
+        "port": port,
+        "preferred_ip": preferred_ip,
+        "preferred_url": f"http://{preferred_ip}:{port}",
+        "reachable_urls": [f"http://{entry['ip']}:{port}" for entry in lan_addresses],
+        "interfaces": lan_addresses,
+        "preferred_ip_detected": any(entry["ip"] == preferred_ip for entry in lan_addresses),
+        "wifi_connected": is_wifi_connected(),
+        "wifi_interface": wifi_info["interface"],
+        "wifi_ssid_active": wifi_info["ssid"],
+    }
+
+
 def configure_wifi_connection() -> None:
     network = config_store.setdefault("network", {})
     wifi_ssid = network.setdefault("wifi_ssid", "KRA1 W-Lan")
     wifi_password = network.setdefault("wifi_password", "kukakuka")
-    network.setdefault("wifi_hidden", False)
 
     wifi_interface = get_wifi_interface()
     if not wifi_interface:
-        print("WLAN: Keine WLAN-USB-Antenne erkannt (Interface wlan*/wl* nicht gefunden).")
+        log_event("WLAN: Keine WLAN-USB-Antenne erkannt (Interface wlan*/wl* nicht gefunden).")
         return
 
     try:
@@ -274,11 +359,11 @@ def configure_wifi_connection() -> None:
             check=False,
         )
     except FileNotFoundError:
-        print("WLAN: 'nmcli' ist nicht installiert. WLAN wird nicht automatisch konfiguriert.")
+        log_event("WLAN: 'nmcli' ist nicht installiert. WLAN wird nicht automatisch konfiguriert.")
         return
 
     if nmcli_exists.returncode != 0:
-        print("WLAN: NetworkManager ist nicht verfügbar. WLAN wird nicht automatisch konfiguriert.")
+        log_event("WLAN: NetworkManager ist nicht verfügbar. WLAN wird nicht automatisch konfiguriert.")
         return
 
     connection_name = "robot-wifi"
@@ -357,16 +442,17 @@ def configure_wifi_connection() -> None:
         check=False,
     )
     if connect_result.returncode == 0:
-        print(f"WLAN konfiguriert: SSID '{wifi_ssid}' (sichtbar), Interface {wifi_interface}.")
+        log_event(f"WLAN konfiguriert: SSID '{wifi_ssid}', Interface {wifi_interface}.")
     else:
         error_output = connect_result.stderr.strip() or connect_result.stdout.strip() or "Unbekannter Fehler"
-        print(f"WLAN-Verbindung konnte nicht aufgebaut werden: {error_output}")
+        log_event(f"WLAN-Verbindung konnte nicht aufgebaut werden: {error_output}")
 
 
 def print_runtime_status() -> None:
     wifi_status = "Verbunden" if is_wifi_connected() else "Getrennt"
     motion_status = "In Bewegung" if controller.is_moving() else "Stillstand"
-    print(f"Status | WLAN: {wifi_status} | Motoren: {motion_status}")
+    enable_status = "AN" if controller.motors_enabled else "AUS"
+    log_event(f"Status | WLAN: {wifi_status} | Motoren: {motion_status} | Enable: {enable_status}")
 
 
 def start_status_monitor() -> None:
@@ -377,6 +463,18 @@ def start_status_monitor() -> None:
 
     thread = threading.Thread(target=_worker, daemon=True, name="status-monitor")
     thread.start()
+
+
+logs: list[dict] = []
+log_lock = threading.Lock()
+
+
+def log_event(message: str) -> None:
+    entry = {"ts": time.strftime("%H:%M:%S"), "message": message}
+    with log_lock:
+        logs.append(entry)
+        del logs[:-500]
+    print(message)
 
 
 config_store = load_config()
@@ -409,13 +507,27 @@ class RobotRequestHandler(BaseHTTPRequestHandler):
         return json.loads(raw) if raw else {}
 
     def do_GET(self) -> None:  # noqa: N802
-        path = urlparse(self.path).path
+        parsed = urlparse(self.path)
+        path = parsed.path
         if path == "/":
             self._send_file(TEMPLATE_FILE, "text/html; charset=utf-8")
         elif path == "/api/config":
             self._send_json(config_store)
         elif path == "/api/network_status":
             self._send_json(get_network_status())
+        elif path == "/api/logs":
+            with log_lock:
+                logs_payload = list(logs)
+            self._send_json(
+                {
+                    "logs": logs_payload,
+                    "is_moving": controller.is_moving(),
+                    "motors_enabled": controller.motors_enabled,
+                    "stop_active": controller.stop_requested.is_set(),
+                }
+            )
+        elif path == "/api/points":
+            self._send_json({"points": config_store.get("points", [])})
         elif path.startswith("/static/"):
             rel = path.replace("/static/", "", 1)
             file_path = STATIC_DIR / rel
@@ -427,6 +539,24 @@ class RobotRequestHandler(BaseHTTPRequestHandler):
             self._send_file(file_path, ctype)
         else:
             self.send_error(HTTPStatus.NOT_FOUND, "Route nicht gefunden")
+
+    def do_DELETE(self) -> None:  # noqa: N802
+        parsed = urlparse(self.path)
+        if parsed.path != "/api/points":
+            self.send_error(HTTPStatus.NOT_FOUND, "Route nicht gefunden")
+            return
+        query = parse_qs(parsed.query)
+        name = (query.get("name", [""])[0] or "").strip()
+        if not name:
+            self._send_json({"status": "error", "message": "Name fehlt"}, status=400)
+            return
+
+        before = len(config_store.get("points", []))
+        config_store["points"] = [p for p in config_store.get("points", []) if p["name"] != name]
+        save_config(config_store)
+        if len(config_store["points"]) < before:
+            log_event(f"Point gelöscht: {name}")
+        self._send_json({"status": "ok", "points": config_store["points"]})
 
     def do_POST(self) -> None:  # noqa: N802
         path = urlparse(self.path).path
@@ -441,7 +571,19 @@ class RobotRequestHandler(BaseHTTPRequestHandler):
                     if axis_id not in axis_by_id:
                         continue
                     axis = axis_by_id[axis_id]
-                    for key in ["name", "step_pin", "dir_pin", "min_deg", "max_deg", "steps_per_90_deg", "max_speed_steps_s", "accel_steps_s2", "invert_direction", "current_deg"]:
+                    for key in [
+                        "name",
+                        "step_pin",
+                        "dir_pin",
+                        "enable_pin",
+                        "min_deg",
+                        "max_deg",
+                        "steps_per_90_deg",
+                        "max_speed_steps_s",
+                        "accel_steps_s2",
+                        "invert_direction",
+                        "current_deg",
+                    ]:
                         if key in axis_update:
                             axis[key] = axis_update[key]
                     if axis["min_deg"] > axis["max_deg"]:
@@ -454,6 +596,7 @@ class RobotRequestHandler(BaseHTTPRequestHandler):
             if path == "/api/move":
                 result = controller.move_axis_to(int(payload["axis_id"]), float(payload["target_deg"]))
                 save_config(config_store)
+                log_event(f"Achse {result['axis_id']} verfahren auf {result['current_deg']}°")
                 self._send_json({"status": "ok", "result": result})
                 return
 
@@ -462,6 +605,58 @@ class RobotRequestHandler(BaseHTTPRequestHandler):
                 for target in payload.get("targets", []):
                     results.append(controller.move_axis_to(int(target["axis_id"]), float(target["target_deg"])))
                 save_config(config_store)
+                log_event("Alle Achsen verfahren")
+                self._send_json({"status": "ok", "results": results})
+                return
+
+            if path == "/api/home":
+                results = controller.home_all_axes()
+                save_config(config_store)
+                log_event("Referenzfahrt abgeschlossen, alle Schrittzähler auf 0 gesetzt")
+                self._send_json({"status": "ok", "results": results, "zeroed": True})
+                return
+
+            if path == "/api/stop":
+                controller.emergency_stop()
+                log_event("NOT-STOPP aktiviert, alle Motoren deaktiviert")
+                self._send_json({"status": "ok", "motors_enabled": controller.motors_enabled, "stop_active": True})
+                return
+
+            if path == "/api/enable":
+                enabled = bool(payload.get("enabled", True))
+                controller.set_motor_enable(enabled)
+                state = "aktiviert" if enabled else "deaktiviert"
+                log_event(f"Enable {state}")
+                self._send_json({"status": "ok", "motors_enabled": controller.motors_enabled, "stop_active": controller.stop_requested.is_set()})
+                return
+
+            if path == "/api/points":
+                name = str(payload.get("name", "")).strip()
+                if not name:
+                    raise ValueError("Point-Name fehlt")
+                positions = [
+                    {"axis_id": axis["id"], "target_deg": axis["current_deg"]}
+                    for axis in config_store["axes"]
+                ]
+                points = [p for p in config_store.get("points", []) if p["name"] != name]
+                points.append({"name": name, "positions": positions, "created_at": int(time.time())})
+                points.sort(key=lambda item: item["name"].lower())
+                config_store["points"] = points
+                save_config(config_store)
+                log_event(f"Point gespeichert: {name}")
+                self._send_json({"status": "ok", "points": points})
+                return
+
+            if path == "/api/points/move":
+                name = str(payload.get("name", "")).strip()
+                point = next((p for p in config_store.get("points", []) if p["name"] == name), None)
+                if not point:
+                    raise ValueError("Point nicht gefunden")
+                results = []
+                for target in point["positions"]:
+                    results.append(controller.move_axis_to(int(target["axis_id"]), float(target["target_deg"])))
+                save_config(config_store)
+                log_event(f"Point angefahren: {name}")
                 self._send_json({"status": "ok", "results": results})
                 return
 
@@ -480,23 +675,8 @@ def run() -> None:
         host = "0.0.0.0"
 
     server = ThreadingHTTPServer((host, port), RobotRequestHandler)
-    print(f"Server läuft auf http://{host}:{port}")
+    log_event(f"Server läuft auf http://{host}:{port}")
     start_status_monitor()
-    if host == "0.0.0.0":
-        network_status = get_network_status()
-        lan_urls = [
-            f"http://{entry['ip']}:{port} ({entry['interface']})"
-            for entry in network_status["interfaces"]
-        ]
-        print(f"Bevorzugte Adresse: {network_status['preferred_url']}")
-        if not network_status["preferred_ip_detected"]:
-            print("Hinweis: Bevorzugte IP aktuell nicht auf einem LAN/WLAN-Interface gefunden.")
-        if lan_urls:
-            print("Erreichbar über Ethernet/WLAN:")
-            for url in lan_urls:
-                print(f" - {url}")
-        else:
-            print("Ethernet/WLAN aktiv: nutze die IP-Adresse des Geräts und Port", port)
     server.serve_forever()
 
 

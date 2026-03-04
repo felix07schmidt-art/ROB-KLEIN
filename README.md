@@ -56,6 +56,29 @@ Damit sich jeder direkt mit dem Pi verbinden kann, setze ihn als AP auf (z. B. m
 
 > Sicherheit: Verwende ein starkes WPA2/WPA3 Passwort und setze zusätzlich einen Not-Aus im Hardwarekreis.
 
+
+## Test-Suite (Konsole)
+
+Es gibt eine vollständige Konsolen-Test-Suite mit detaillierter Ausgabe:
+
+```bash
+python tests/run_console_tests.py
+```
+
+Sie führt aus:
+
+- **Unit Tests** (Berechnungen/Logik):
+  - Grad→Steps Umrechnung
+  - Clamping auf Achsgrenzen
+  - Homing setzt alle Zähler auf 0
+  - Stop blockiert Bewegungen
+  - Enable-Pins werden wirklich auf Treiber-Logik geschaltet (Fake-GPIO-Validierung)
+- **Smoke Tests**:
+  - API-/Server-Erreichbarkeit nach Start
+  - WLAN-Statusabfrage (`/api/network_status`)
+  - Motor-Erreichbarkeit über Enable AUS/AN (`/api/enable`)
+  - Konsolen-/Log-Endpunkt (`/api/logs`)
+
 ## API Kurzüberblick
 
 - `GET /api/config` → komplette Konfiguration
