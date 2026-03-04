@@ -57,6 +57,8 @@ class AxisRuntime:
 class StepDirController:
     def __init__(self, config: dict):
         self.config = config
+        self._active_moves = 0
+        self._active_moves_lock = threading.Lock()
         self.axes_runtime: Dict[int, AxisRuntime] = {
             axis["id"]: AxisRuntime(lock=threading.Lock()) for axis in config["axes"]
         }
@@ -107,10 +109,11 @@ class StepDirController:
             current_speed = 100.0
             min_delay = 1.0 / max_speed / 2.0
 
-            for _ in range(total_steps):
-                current_speed = min(max_speed, current_speed + accel * 0.001)
-                pulse_delay = max(min_delay, 1.0 / current_speed / 2.0)
-                self._pulse(axis["step_pin"], pulse_delay)
+            with self._track_move():
+                for _ in range(total_steps):
+                    current_speed = min(max_speed, current_speed + accel * 0.001)
+                    pulse_delay = max(min_delay, 1.0 / current_speed / 2.0)
+                    self._pulse(axis["step_pin"], pulse_delay)
 
             axis["current_deg"] = clamped_target
             return {
@@ -120,6 +123,25 @@ class StepDirController:
                 "steps": total_steps,
                 "clamped": clamped_target != target_deg,
             }
+
+    def is_moving(self) -> bool:
+        with self._active_moves_lock:
+            return self._active_moves > 0
+
+    class _MoveTracker:
+        def __init__(self, parent: "StepDirController"):
+            self.parent = parent
+
+        def __enter__(self) -> None:
+            with self.parent._active_moves_lock:
+                self.parent._active_moves += 1
+
+        def __exit__(self, exc_type, exc, tb) -> None:
+            with self.parent._active_moves_lock:
+                self.parent._active_moves = max(0, self.parent._active_moves - 1)
+
+    def _track_move(self) -> "StepDirController._MoveTracker":
+        return StepDirController._MoveTracker(self)
 
 
 def load_config() -> dict:
@@ -188,7 +210,173 @@ def get_network_status() -> dict:
         "reachable_urls": [f"http://{entry['ip']}:{port}" for entry in lan_addresses],
         "interfaces": lan_addresses,
         "preferred_ip_detected": any(entry["ip"] == preferred_ip for entry in lan_addresses),
+        "wifi_connected": is_wifi_connected(),
     }
+
+
+def get_wifi_interface() -> str | None:
+    for interface in get_lan_addresses():
+        interface_name = interface["interface"]
+        if interface_name.startswith(("wlan", "wl")):
+            return interface_name
+    try:
+        result = subprocess.run(
+            ["ip", "-o", "link", "show"],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+    except FileNotFoundError:
+        return None
+
+    for line in result.stdout.splitlines():
+        parts = line.split(":", 2)
+        if len(parts) < 2:
+            continue
+        interface_name = parts[1].strip()
+        if interface_name.startswith(("wlan", "wl")):
+            return interface_name
+    return None
+
+
+def is_wifi_connected() -> bool:
+    interface = get_wifi_interface()
+    if not interface:
+        return False
+    try:
+        result = subprocess.run(
+            ["ip", "-4", "addr", "show", interface],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+    except FileNotFoundError:
+        return False
+    return "inet " in result.stdout
+
+
+def configure_wifi_connection() -> None:
+    network = config_store.setdefault("network", {})
+    wifi_ssid = network.setdefault("wifi_ssid", "KRA1 W-Lan")
+    wifi_password = network.setdefault("wifi_password", "kukakuka")
+    network.setdefault("wifi_hidden", False)
+
+    wifi_interface = get_wifi_interface()
+    if not wifi_interface:
+        print("WLAN: Keine WLAN-USB-Antenne erkannt (Interface wlan*/wl* nicht gefunden).")
+        return
+
+    try:
+        nmcli_exists = subprocess.run(
+            ["nmcli", "--version"],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+    except FileNotFoundError:
+        print("WLAN: 'nmcli' ist nicht installiert. WLAN wird nicht automatisch konfiguriert.")
+        return
+
+    if nmcli_exists.returncode != 0:
+        print("WLAN: NetworkManager ist nicht verfügbar. WLAN wird nicht automatisch konfiguriert.")
+        return
+
+    connection_name = "robot-wifi"
+    existing = subprocess.run(
+        ["nmcli", "-t", "-f", "NAME", "connection", "show"],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    connection_exists = connection_name in [line.strip() for line in existing.stdout.splitlines() if line.strip()]
+
+    hidden_flag = "no"
+    if connection_exists:
+        subprocess.run(
+            [
+                "nmcli",
+                "connection",
+                "modify",
+                connection_name,
+                "802-11-wireless.ssid",
+                wifi_ssid,
+                "802-11-wireless.hidden",
+                hidden_flag,
+                "wifi-sec.key-mgmt",
+                "wpa-psk",
+                "wifi-sec.psk",
+                wifi_password,
+                "connection.interface-name",
+                wifi_interface,
+            ],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+    else:
+        subprocess.run(
+            [
+                "nmcli",
+                "connection",
+                "add",
+                "type",
+                "wifi",
+                "ifname",
+                wifi_interface,
+                "con-name",
+                connection_name,
+                "ssid",
+                wifi_ssid,
+            ],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        subprocess.run(
+            [
+                "nmcli",
+                "connection",
+                "modify",
+                connection_name,
+                "802-11-wireless.hidden",
+                hidden_flag,
+                "wifi-sec.key-mgmt",
+                "wpa-psk",
+                "wifi-sec.psk",
+                wifi_password,
+            ],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+
+    connect_result = subprocess.run(
+        ["nmcli", "connection", "up", connection_name],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if connect_result.returncode == 0:
+        print(f"WLAN konfiguriert: SSID '{wifi_ssid}' (sichtbar), Interface {wifi_interface}.")
+    else:
+        error_output = connect_result.stderr.strip() or connect_result.stdout.strip() or "Unbekannter Fehler"
+        print(f"WLAN-Verbindung konnte nicht aufgebaut werden: {error_output}")
+
+
+def print_runtime_status() -> None:
+    wifi_status = "Verbunden" if is_wifi_connected() else "Getrennt"
+    motion_status = "In Bewegung" if controller.is_moving() else "Stillstand"
+    print(f"Status | WLAN: {wifi_status} | Motoren: {motion_status}")
+
+
+def start_status_monitor() -> None:
+    def _worker() -> None:
+        while True:
+            print_runtime_status()
+            time.sleep(2)
+
+    thread = threading.Thread(target=_worker, daemon=True, name="status-monitor")
+    thread.start()
 
 
 config_store = load_config()
@@ -283,6 +471,8 @@ class RobotRequestHandler(BaseHTTPRequestHandler):
 
 
 def run() -> None:
+    configure_wifi_connection()
+    save_config(config_store)
     network = config_store["network"]
     host = network.get("host", "0.0.0.0")
     port = int(network.get("port", 5000))
@@ -291,6 +481,7 @@ def run() -> None:
 
     server = ThreadingHTTPServer((host, port), RobotRequestHandler)
     print(f"Server läuft auf http://{host}:{port}")
+    start_status_monitor()
     if host == "0.0.0.0":
         network_status = get_network_status()
         lan_urls = [
