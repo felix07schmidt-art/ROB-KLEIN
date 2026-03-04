@@ -32,18 +32,27 @@ Dieses Repository enthält jetzt eine lauffähige Websteuerung für einen 6-Achs
 
 ## Starten
 
+Wenn du bereits im Projektordner bist (z. B. `~/Desktop/ROB-KLEIN-main`), funktioniert dieser Ablauf zuverlässig:
+
 ```bash
 python3 -m venv .venv
 source .venv/bin/activate
 pip install -r requirements.txt
-python app.py
+python3 app.py
 ```
 
 Dann im Browser öffnen:
 
-- Lokal: `http://localhost:5000`
-- Über WLAN **und** LAN (bei statischer Pi-IP): `http://192.168.100.2:5000`
-- Alternativ über jede erkannte Interface-IP (wird im Tab **Netzwerk** angezeigt).
+- auf dem Pi: `http://localhost:5000`
+- im gleichen Netzwerk: `http://<IP-des-Pi>:5000`
+
+Wenn du nur schnell loslegen willst (ohne venv):
+
+```bash
+python3 app.py
+```
+
+Dann im Browser `http://<IP-des-Pi>:5000` öffnen.
 
 ## WLAN-Access-Point (Raspberry Pi)
 
